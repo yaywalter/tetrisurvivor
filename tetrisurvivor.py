@@ -40,6 +40,7 @@ COOLDOWN_DECAY_RATE = 0.5  # How quickly the cooldown meter decays when not movi
 # Game state
 player_pos = [0, 0]  # Player position in grid coordinates
 player_color = CYAN
+player_health = 1 * FPS
 tetrominoes = []
 game_over = False
 score = 0
@@ -146,7 +147,7 @@ def draw_cooldown_meters(surface):
         surface.blit(label, (x + meter_width + padding, y))
 
 def spawn_tetromino(player_x, player_y):
-    spawn_distance = 20  # Grid cells away from the player
+    spawn_distance = 30  # Grid cells away from the player
     angle = random.uniform(0, 2 * math.pi)
     x = player_x + int(math.cos(angle) * spawn_distance)
     y = player_y + int(math.sin(angle) * spawn_distance)
@@ -214,8 +215,10 @@ def draw_ui(surface, score, game_time):
     font = pygame.font.Font(None, 36)
     score_text = font.render(f"Score: {score}", True, WHITE)
     time_text = font.render(f"Time: {game_time // 60}s", True, WHITE)
+    health_text = font.render(f"{int(player_health/FPS*100)} HP", True, WHITE)
     surface.blit(score_text, (10, 10))
-    surface.blit(time_text, (10, 50))
+    surface.blit(time_text, (10, 40))
+    surface.blit(health_text, (WIDTH-100,HEIGHT-40))
 
 
 def check_adjacent(tetromino1, tetromino2):
@@ -277,36 +280,38 @@ def handle_fragments(tetromino):
                 fragments.append(fragment)
     
     new_tetrominoes = []
-    new_shape = [[0 for _ in range(len(tetromino.shape[0]))] for _ in range(len(tetromino.shape))]
     
     for fragment in fragments:
-        if len(fragment) == 4:
-            # Create a new Tetromino for this fragment
-            min_x = min(x for x, _ in fragment)
-            min_y = min(y for _, y in fragment)
-            max_x = max(x for x, _ in fragment)
-            max_y = max(y for _, y in fragment)
-            
-            fragment_shape = [[0 for _ in range(max_x - min_x + 1)] for _ in range(max_y - min_y + 1)]
-            for x, y in fragment:
-                fragment_shape[y - min_y][x - min_x] = 1
-            
-            # Find the matching original Tetromino color
-            for shape, color in SHAPES:
-                if shape == fragment_shape:
-                    new_tetrominoes.append(Tetromino(tetromino.x + min_x, tetromino.y + min_y, fragment_shape, color))
-                    break
-            else:
-                # If no match found, keep it in the cluster
-                for x, y in fragment:
-                    new_shape[y][x] = 1
-        elif len(fragment) > 4:
-            # Keep larger fragments in the cluster
-            for x, y in fragment:
-                new_shape[y][x] = 1
+        min_x = min(x for x, _ in fragment)
+        min_y = min(y for _, y in fragment)
+        max_x = max(x for x, _ in fragment)
+        max_y = max(y for _, y in fragment)
+        
+        fragment_shape = [[0 for _ in range(max_x - min_x + 1)] for _ in range(max_y - min_y + 1)]
+        for x, y in fragment:
+            fragment_shape[y - min_y][x - min_x] = 1
+        
+        # Check if the fragment matches any original Tetromino shape
+        for shape, color in SHAPES:
+            if shape == fragment_shape:
+                new_tetrominoes.append(Tetromino(tetromino.x + min_x, tetromino.y + min_y, fragment_shape, color))
+                break
+        else:
+            # If no match found, create a new cluster Tetromino
+            new_tetrominoes.append(Tetromino(tetromino.x + min_x, tetromino.y + min_y, fragment_shape, WHITE))
     
-    tetromino.shape = new_shape
     return new_tetrominoes
+
+def check_contiguous(line, min_length=8):
+    count = 0
+    max_count = 0
+    for cell in line:
+        if cell:
+            count += 1
+            max_count = max(max_count, count)
+        else:
+            count = 0
+    return max_count >= min_length
 
 def check_and_destroy_lines(tetromino):
     global score
@@ -315,12 +320,13 @@ def check_and_destroy_lines(tetromino):
 
     # Check rows
     for y, row in enumerate(tetromino.shape):
-        if sum(row) >= 10:
+        if check_contiguous(row):
             rows_to_remove.append(y)
 
     # Check columns
     for x in range(len(tetromino.shape[0])):
-        if sum(row[x] for row in tetromino.shape) >= 10:
+        column = [row[x] for row in tetromino.shape]
+        if check_contiguous(column):
             cols_to_remove.append(x)
 
     # Remove rows
@@ -420,18 +426,19 @@ def main():
                 if check_and_destroy_lines(tetrominoes[i]):
                     new_tetrominoes = handle_fragments(tetrominoes[i])
                     tetrominoes.extend(new_tetrominoes)
-                    # If the tetromino is completely destroyed, remove it
-                    if not any(any(row) for row in tetrominoes[i].shape):
-                        tetrominoes.pop(i)
-                        continue
+                    tetrominoes.pop(i)
+                    continue
             i += 1
 
         # Check for collision with player
         player_tetromino = Tetromino(player_pos[0], player_pos[1], [[1]], player_color)
         for tetromino in tetrominoes:
+            global player_health
             if check_adjacent(tetromino, player_tetromino):
-                game_over = True
-                break
+                player_health -= 1
+                if player_health <= 0:
+                    game_over = True
+                    break
 
         # Draw everything
         screen.fill(BACKGROUND_COLOR)
